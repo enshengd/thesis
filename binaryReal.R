@@ -20,8 +20,8 @@ library(pROC)
 library(verification)
 library(randomForest)
 library(matrixStats)
-source("/Users/ensheng/OneDrive/stat500/functions/getData.R")
-source("/Users/ensheng/OneDrive/stat500/functions/getName.R")
+source("/Users/ensheng/OneDrive/thesis/functions/getData.R")
+source("/Users/ensheng/OneDrive/thesis/functions/getName.R")
 
 # model selection
 # c("knn","ld","log","svm","dtree","ptree","neural","nb","C50","fda","pls","mda")
@@ -35,7 +35,7 @@ modelList<-c("nb")
 
 # c(401,410,411,413,414,416:420,422,424:428,433)
 
-for (id in c(108)) {
+for (id in c(221)) {
   # set up the image layout and the processing time
   par(mfrow=c(3,1))
   ptm<-proc.time()
@@ -62,7 +62,8 @@ for (id in c(108)) {
   realData1<-realData[realData[,1]==1,][,-1]
   # number of features
   N<-ncol(realData)-1
-  kValue<-10 # for knn
+  k.cv<-10    # k folds
+  kValue<-10  # for knn
   
   # output summary table
   output.table<-matrix(data=NA,nrow=length(modelList)*3,ncol=12)
@@ -71,7 +72,7 @@ for (id in c(108)) {
   for (models in modelList) {
     cat("\n", models, "\n")
     
-    sigma.noise<-c(0.1,0.5,1.0)             # test for 0, 0.1, 0.5, 1.0
+    sigma.noise<-c(0.5)             # test for 0, 0.1, 0.5, 1.0
     nsim<-3                                # 100, simulation repeat times (1, 50, 100, 500)
     noisy.repl<-c(1)                     # c(1:10) replications of the rare parts (y=1)
     noisy.train<-c(10,20,40,60,80,100)      # c(10,20,40,60,80,100) replications of the training data sets
@@ -90,7 +91,7 @@ for (id in c(108)) {
       print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
       cat("model =", models, "; sigma.noise =", k, "\n")
       
-      # evaluation criteria
+      # evaluation criteria initialization
       roc.multi<-list()
       rocdiff.multi<-list()
       roc.sum<-matrix(0, nrow=nnrepl, ncol=nntrain) # save roc results for each nsim; same as roc.ave in previous versions
@@ -111,316 +112,346 @@ for (id in c(108)) {
       
       for (t in 1:nsim) {
         
-        ## split into training/testing data sets
-        smp_size<-floor(0.5 * nrow(realData0))
-        # set.seed(123) # set the seed to make your partition reproductible
-        train_ind<-sample(seq_len(nrow(realData0)), size = smp_size)
-        train0<-realData0[train_ind, ]
-        test0<-realData0[-train_ind, ]
-        
-        smp_size<-floor(0.5 * nrow(realData1))
-        # set.seed(123) # set the seed to make your partition reproductible
-        train_ind<-sample(seq_len(nrow(realData1)), size = smp_size)
-        train1<-realData1[train_ind, ]
-        test1<-realData1[-train_ind, ]
-        
-        #
-        train.X<-rbind(train0,train1)
-        test.X<-rbind(test0,test1)
-        train.y<-c(rep(0,nrow(train0)),rep(1,nrow(train1)))
-        test.y<-c(rep(0,nrow(test0)),rep(1,nrow(test1)))
-        factor.y<-as.factor(train.y)
-        df.train<-as.data.frame(cbind(train.y,train.X))
-        df.test<-as.data.frame(cbind(test.y,test.X))
-        #
-        n0<-nrow(train0)
-        n1<-nrow(train1)
-        train.size<-nrow(train.X)  # size of the training data set
-        
-        ############################################### 
-        ############# Original Assessmet ##############
-        ############################################### 
-        
-        if (models=="knn") {
-          ############ KNN ############
-          y.prob<-knn(train.X, test.X, factor.y, k=kValue, prob=TRUE) # get the probability for y.prob=1
-          y.prob<-attr(y.prob,"prob")
-        } else if (models=="ld") {
-          ############ Linear Discriminant ############
-          lda.fit<-lda(train.y~., data=df.train)
-          y.prob<-predict(lda.fit,df.test)$posterior[,2] # prediction probability
-        } else if (models=="log") {
-          ############ Logistic Regression ############
-          y.fit<-multinom(factor.y~., data=df.train[,-1], trace=FALSE)
-          y.prob<-predict(y.fit,df.test,type="probs")
-        } else if (models=="svm") {
-          ############ SVM ############
-          y.fit<-svm(factor.y~., data=df.train[,-1], probability=TRUE)
-          y.pred<-predict(y.fit,newdata=df.test,probability=TRUE)
-          y.prob<-attr(y.pred,"probabilities")[,2]
-        } else if (models=="dtree") {
-          ############ Decision Tree ############
-          # y.fit<-tree(factor.y~., data=df.train[,-1])
-          # y.prob<-predict(y.fit, df.test, type="vector")[,2]
-          
-          y.fit<-rpart(factor.y~., data=df.train[,-1])
-          y.prob<-predict(y.fit, df.test)[,2]
-        } else if (models=="ptree") {
-          ############ Prune Tree ############
-          y.auto<-rpart(factor.y~., data=df.train[,-1])
-          y.fit<-prune(y.auto, cp=0.1)
-          y.prob<-predict(y.fit, df.test)[,2]
-        } else if (models=="forest") {
-          ############ Random Forest ############
-          y.fit<-randomForest(factor.y~.,data=df.train[,-1],sampsize=train.size)
-          y.prob<-predict(y.fit,newdata=df.test,type="prob")[,2]
-        } else if (models=="neural") {
-          ############ Neural Network ############
-          y.fit<-nnet(factor.y~., data=df.train[,-1],size=2,decay = 5e-4, maxit = 200, trace=FALSE)
-          y.prob<-as.numeric(predict(y.fit, df.test))
-        } else if (models=="nb") {
-          ############ Naive Bayes ############
-          # y.fit<-naiveBayes(factor.y~.,data=df.train)
-          # y.prob<-predict(y.fit,df.test,type = "raw")[,2]
-          
-          y.prob<-predict(naiveBayes(factor.y~.,data=df.train),df.test,type = "raw")[,2]
-        } else if (models=="C50") {
-          ############ C50 ############
-          y.fit<-C5.0(factor.y~., data=df.train[,-1],rules=FALSE)
-          y.prob<-predict(y.fit, df.test, type = "prob")[,2]
-        } else if (models=="fda") {
-          ############ FDA ############
-          y.fit<-fda(factor.y~., data=df.train[,-1])
-          y.prob<-predict(y.fit, df.test,type = "posterior")[,2]
-        } else if (models=="pls") {
-          ############ PLS ############
-          y.fit<-plsda(df.train[,-1],factor.y)
-          y.prob<-predict(y.fit,df.test[,-1],type = "prob")[,2,1]
-        } else if (models=="mda") {
-          ############ MDA ############
-          y.fit<-mda(factor.y~., data=df.train[,-1])
-          y.prob<-predict(y.fit,df.test,type = "posterior")[,2]
-        } else {
-          stop("Wrong model type!")
-          quit("no")  # not working?
-        }
-        
-        # evaluation
-        # roc
-        roc0<-auc(test.y, y.prob)
-        
-        #kl
-        y.prob1<-cbind((1-y.prob),y.prob)
-        log.prob<-log(1/(y.prob1+e))
-        log.matrix<-cbind(df.test[,1],log.prob)
-        klsum0<-sum(log.matrix[log.matrix[,1] == 0,][,2])
-        klsum1<-sum(log.matrix[log.matrix[,1] == 1,][,3])
-        kl0<-(klsum0+klsum1)/nrow(log.matrix)
-        
-        # eu
-        y.prob1<-cbind((1-y.prob),y.prob)
-        minus.prob<-(1-y.prob1)^2
-        minus.matrix<-cbind(df.test[,1],minus.prob)
-        eusum0<-sum(minus.matrix[minus.matrix[,1] == 0,][,2])
-        eusum1<-sum(minus.matrix[minus.matrix[,1] == 1,][,3])
-        eu0<-sqrt((eusum0+eusum1)/nrow(log.matrix))
-        
-        rocMean<-rocMean+roc0
-        klMean<-klMean+kl0
-        euMean<-euMean+eu0
-        # print (roc0)
-        
-        ################################################ 
-        ######## Vibration in Training Data Set ########
-        ################################################ 
+        # sample from 1 to k, nrow times (the number of observations in the data)
+        realData0$id <- sample(1:k.cv, nrow(realData0), replace = TRUE)
+        realData1$id <- sample(1:k.cv, nrow(realData1), replace = TRUE)
         
         # store the results of roc areas for each pair of training and validation data sets
-        yprob.single<-matrix(0, nrow=nnrepl, ncol=nntrain)
+        roc0.cv<-0
+        kl0.cv<-0
+        eu0.cv<-0
         roc.table<-matrix(0, nrow=nnrepl, ncol=nntrain)
         roc.diff<-matrix(0, nrow=nnrepl, ncol=nntrain)
-        
         kl.table<-matrix(0, nrow=nnrepl, ncol=nntrain)
         kl.diff<-matrix(0, nrow=nnrepl, ncol=nntrain)
-        
         eu.table<-matrix(0, nrow=nnrepl, ncol=nntrain)
         eu.diff<-matrix(0, nrow=nnrepl, ncol=nntrain)
-        ############################
-        for (j in 1:nnrepl) {
-          rare.size<-j*n1
-          total.size<-rare.size+n0 # size of the vibrated training data set: (n0+j*n1)
-          train1.star<-train1[rep(seq_len(nrow(train1)), j), ] # duplicate the rare part
-          varDiag<-diag(colVars(as.matrix(train1.star)))  # sample variance diagonal (sigma q)
-          trainVib.y<-c(rep(0,n0),rep(1,rare.size))
-          factoryVib.y<-as.factor(trainVib.y)
-          yhat<-0
-          for (i in 1:nntrain) {
-            # add noise to each rare part in the training data set
-            noise<-mvrnorm(rare.size, rep(0,N), k*varDiag) # epsilson
-            # noise<-mvrnorm(rare.size, rep(0,N), k*diag(N)) # epsilson
-            train1.vib<-train1.star+noise # vibrate the rare part
-            train1.anti<-train1.star-noise # add anti-noise
+        
+        # k-fold cross-validation
+        for (kk in 1:k.cv){
+          train0 <- subset(realData0, id %in% list[-kk])[,-length(realData0)]
+          test0 <- subset(realData0, id %in% c(kk))[,-length(realData0)]
+          train1 <- subset(realData1, id %in% list[-kk])[,-length(realData1)]
+          test1 <- subset(realData1, id %in% c(kk))[,-length(realData1)]
+          
+          train.X<-rbind(train0,train1)
+          test.X<-rbind(test0,test1)
+          train.y<-c(rep(0,nrow(train0)),rep(1,nrow(train1)))
+          test.y<-c(rep(0,nrow(test0)),rep(1,nrow(test1)))
+          factor.y<-as.factor(train.y)
+          df.train<-as.data.frame(cbind(train.y,train.X))
+          df.test<-as.data.frame(cbind(test.y,test.X))
+          
+          n0<-nrow(train0)
+          n1<-nrow(train1)
+          train.size<-nrow(train.X)  # size of the training data set
+          
+          ############################################### 
+          ############# Original Assessmet ##############
+          ############################################### 
+          
+          if (models=="knn") {
+            ############ KNN ############
+            y.prob<-knn(train.X, test.X, factor.y, k=kValue, prob=TRUE) # get the probability for y.prob=1
+            y.prob<-attr(y.prob,"prob")
+          } else if (models=="ld") {
+            ############ Linear Discriminant ############
+            lda.fit<-lda(train.y~., data=df.train)
+            y.prob<-predict(lda.fit,df.test)$posterior[,2] # prediction probability
+          } else if (models=="log") {
+            ############ Logistic Regression ############
+            y.fit<-multinom(factor.y~., data=df.train[,-1], trace=FALSE)
+            y.prob<-predict(y.fit,df.test,type="probs")
+          } else if (models=="svm") {
+            ############ SVM ############
+            y.fit<-svm(factor.y~., data=df.train[,-1], probability=TRUE)
+            y.pred<-predict(y.fit,newdata=df.test,probability=TRUE)
+            y.prob<-attr(y.pred,"probabilities")[,2]
+          } else if (models=="dtree") {
+            ############ Decision Tree ############
+            # y.fit<-tree(factor.y~., data=df.train[,-1])
+            # y.prob<-predict(y.fit, df.test, type="vector")[,2]
             
-            # generate the training data set with j rare parts (y=1)
-            trainVib.X<-rbind(train0,train1.vib) # training data set after vibrating the rare part
-            trainVib<-as.data.frame(cbind(trainVib.y, trainVib.X))
-            trainAnti.X<-rbind(train0,train1.anti)
-            trainAnti<-as.data.frame(cbind(trainVib.y, trainAnti.X))
+            y.fit<-rpart(factor.y~., data=df.train[,-1])
+            y.prob<-predict(y.fit, df.test)[,2]
+          } else if (models=="ptree") {
+            ############ Prune Tree ############
+            y.auto<-rpart(factor.y~., data=df.train[,-1])
+            y.fit<-prune(y.auto, cp=0.1)
+            y.prob<-predict(y.fit, df.test)[,2]
+          } else if (models=="forest") {
+            ############ Random Forest ############
+            y.fit<-randomForest(factor.y~.,data=df.train[,-1],sampsize=train.size)
+            y.prob<-predict(y.fit,newdata=df.test,type="prob")[,2]
+          } else if (models=="neural") {
+            ############ Neural Network ############
+            y.fit<-nnet(factor.y~., data=df.train[,-1],size=2,decay = 5e-4, maxit = 200, trace=FALSE)
+            y.prob<-as.numeric(predict(y.fit, df.test))
+          } else if (models=="nb") {
+            ############ Naive Bayes ############
+            y.fit<-naiveBayes(as.factor(train.y)~.,data=df.train)
+            y.prob<-predict(y.fit,df.test,type = "raw")[,2]
             
-            # models
-            if (models=="knn") {
-              # knn
-              y.pred_noise<-knn(trainVib.X, test.X, factoryVib.y, k=kValue, prob=TRUE)  # noise
-              y.prob_noise<-attr(y.pred_noise,"prob")
-              
-              y.pred_anti<-knn(trainAnti.X, test.X, factoryVib.y, k=kValue, prob=TRUE)  # anti-noise
-              y.prob_anti<-attr(y.pred_anti,"prob")
-            }  else if (models=="ld") {
-              # ld
-              lda.fit<-lda(trainVib.y~., data=trainVib[,-1])
-              y.prob_noise<-predict(lda.fit,df.test)$posterior[,2]
-              
-              lda.fit<-lda(trainVib.y~., data=trainAnti[,-1])
-              y.prob_anti<-predict(lda.fit,df.test)$posterior[,2]
-            } else if (models=="log") {
-              # log
-              y.fit<-multinom(factoryVib.y~., data=trainVib[,-1], trace=FALSE)
-              y.prob_noise<-predict(y.fit,df.test,type="probs")
-              
-              y.fit<-multinom(factoryVib.y~., data=trainAnti[,-1], trace=FALSE)
-              y.prob_anti<-predict(y.fit,df.test,type="probs")
-            } else if (models=="svm") {
-              # svm
-              y.fit<-svm(factoryVib.y~., data=trainVib[,-1], probability=TRUE)
-              y.pred<-predict(y.fit,newdata=df.test,probability=TRUE)
-              y.prob_noise<-attr(y.pred,"probabilities")[,2]
-              
-              y.fit<-svm(factoryVib.y~., data=trainAnti[,-1], probability=TRUE)
-              y.pred<-predict(y.fit,newdata=df.test,probability=TRUE)
-              y.prob_anti<-attr(y.pred,"probabilities")[,2]
-            } else if (models=="dtree") {
-              # dtree
-              # y.fit<-tree(factoryVib.y~., data=trainVib[,-1])
-              # y.prob_noise<-predict(y.fit, df.test, type="vector")[,2]
-              
-              y.fit<-rpart(factoryVib.y~., data=trainVib[,-1])
-              y.prob_noise<-predict(y.fit, df.test)[,2]
-              
-              # y.fit<-tree(factoryVib.y~., data=trainAnti[,-1])
-              # y.prob_anti<-predict(y.fit, df.test, type="vector")[,2]
-              
-              y.fit<-rpart(factoryVib.y~., data=trainAnti[,-1])
-              y.prob_anti<-predict(y.fit, df.test)[,2]
-              
-            } else if (models=="ptree") {
-              # ptree
-              y.auto<-rpart(factoryVib.y~., data=trainVib[,-1])
-              y.fit<-prune(y.auto, cp=0.1)
-              y.prob_noise<-predict(y.fit, df.test)[,2]
-              
-              y.auto<-rpart(factoryVib.y~., data=trainAnti[,-1])
-              y.fit<-prune(y.auto, cp=0.1)
-              y.prob_anti<-predict(y.fit, df.test)[,2]
-            } else if (models=="forest") {
-              # forest
-              y.fit<-randomForest(factoryVib.y~., data=trainVib[,-1],sampsize=train.size)
-              y.prob_noise<-predict(y.fit,newdata=df.test,type="prob")[,2]
-              
-              y.fit<-randomForest(factoryVib.y~., data=trainAnti[,-1],sampsize=train.size)
-              y.prob_anti<-predict(y.fit,newdata=df.test,type="prob")[,2]
-            } else if (models=="neural") {
-              # neural
-              y.fit<-nnet(factoryVib.y~., data=trainVib[,-1],size=2,decay = 5e-4, maxit = 200, trace=FALSE)
-              y.prob_noise<-as.numeric(predict(y.fit, df.test))
-              
-              y.fit<-nnet(factoryVib.y~., data=trainAnti[,-1],size=2,decay = 5e-4, maxit = 200, trace=FALSE)
-              y.prob_anti<-as.numeric(predict(y.fit, df.test))
-            } else if (models=="nb") {
-              # nb
-              
-              y.prob_noise<-predict(naiveBayes(factoryVib.y~.,data=trainVib[,-1]),df.test,type = "raw")[,2]
-              
-              y.prob_anti<-predict(naiveBayes(factoryVib.y~.,data=trainVib[,-1]),df.test,type = "raw")[,2]
-              
-              
-              # y.fit<-naiveBayes(factoryVib.y~.,data=trainVib)
-              # y.prob_noise<-predict(y.fit,df.test,type = "raw")[,2]
-              # 
-              # y.fit<-naiveBayes(factoryVib.y~.,data=trainAnti)
-              # y.prob_anti<-predict(y.fit,df.test,type = "raw")[,2]
-              
-              
-              # y.fit<-naiveBayes(factor.y~.,data=df.train[,-1])
-              # y.prob<-predict(y.fit,df.test,type = "raw")[,2]
-              
-            } else if (models=="C50") {
-              # C50
-              y.fit<-C5.0(factoryVib.y~., data=trainVib[,-1],rules=TRUE)
-              y.prob_noise<-predict(y.fit, df.test, type = "prob")[,2]
-              
-              y.fit<-C5.0(factoryVib.y~., data=trainAnti[,-1],rules=TRUE)
-              y.prob_anti<-predict(y.fit, df.test, type = "prob")[,2]
-            } else if (models=="fda") {
-              ############ FDA ############
-              y.fit<-fda(factoryVib.y~., data=trainVib[,-1])
-              y.prob_noise<-predict(y.fit, df.test, type = "posterior")[,2]
-              
-              y.fit<-fda(factoryVib.y~., data=trainAnti[,-1])
-              y.prob_anti<-predict(y.fit, df.test, type = "posterior")[,2]
-            } else if (models=="pls") {
-              ############ PLS ############
-              y.fit<-plsda(trainVib[,-1],factoryVib.y)
-              y.prob_noise<-predict(y.fit, df.test[,-1], type = "prob")[,2,1]
-              
-              y.fit<-plsda(trainAnti[,-1],factoryVib.y)
-              y.prob_anti<-predict(y.fit, df.test[,-1], type = "prob")[,2,1]
-            } else if (models=="mda") {
-              ############ MDA ############
-              y.fit<-mda(factoryVib.y~., data=trainVib[,-1])
-              y.prob_noise<-predict(y.fit, df.test, type = "posterior")[,2]
-              
-              y.fit<-mda(factoryVib.y~., data=trainAnti[,-1])
-              y.prob_anti<-predict(y.fit, df.test, type = "posterior")[,2]
-            } else {
-              stop("Wrong model type! Please use lower cases")
-            }
-            
-            # prediction probabilities after two-size vibration
-            yhat<-yhat+((y.prob_noise+y.prob_anti)/2)   # accumulative yhat
-            
-            # assessment
-            y.prob<-yhat/i
-            
-            # roc
-            roc.table[j,i]<-auc(test.y, y.prob)       # final roc table, same size as roc.summary
-            roc.diff[j,i]<-roc.table[j,i]-roc0
-            
-            #kl
-            y.prob1<-cbind((1-y.prob),y.prob)
-            log.prob<-log(1/(y.prob1+e))
-            log.matrix<-cbind(df.test[,1],log.prob)
-            klsum0<-sum(log.matrix[log.matrix[,1] == 0,][,2])
-            klsum1<-sum(log.matrix[log.matrix[,1] == 1,][,3])
-            kl.table[j,i]<-(klsum0+klsum1)/nrow(log.matrix)
-            kl.diff[j,i]<-kl.table[j,i]-kl0
-            
-            # eu
-            y.prob1<-cbind((1-y.prob),y.prob)
-            minus.prob<-(1-y.prob1)^2
-            minus.matrix<-cbind(df.test[,1],minus.prob)
-            eusum0<-sum(minus.matrix[minus.matrix[,1] == 0,][,2])
-            eusum1<-sum(minus.matrix[minus.matrix[,1] == 1,][,3])
-            eu.table[j,i]<-sqrt((eusum0+eusum1)/nrow(log.matrix))
-            eu.diff[j,i]<-eu.table[j,i]-eu0
+            # y.prob<-predict(naiveBayes(factor.y~.,data=df.train),df.test,type = "raw")[,2]
+          } else if (models=="C50") {
+            ############ C50 ############
+            y.fit<-C5.0(factor.y~., data=df.train[,-1],rules=FALSE)
+            y.prob<-predict(y.fit, df.test, type = "prob")[,2]
+          } else if (models=="fda") {
+            ############ FDA ############
+            y.fit<-fda(factor.y~., data=df.train[,-1])
+            y.prob<-predict(y.fit, df.test,type = "posterior")[,2]
+          } else if (models=="pls") {
+            ############ PLS ############
+            y.fit<-plsda(df.train[,-1],factor.y)
+            y.prob<-predict(y.fit,df.test[,-1],type = "prob")[,2,1]
+          } else if (models=="mda") {
+            ############ MDA ############
+            y.fit<-mda(factor.y~., data=df.train[,-1])
+            y.prob<-predict(y.fit,df.test,type = "posterior")[,2]
+          } else {
+            stop("Wrong model type!")
+            quit("no")  # not working?
           }
-          plot(roc.table[j,])
-          abline(h = roc0)
           
-          plot(kl.table[j,])
-          abline(h = kl0)
+          # evaluation
+          # roc
+          roc0<-auc(test.y, y.prob)
           
-          plot(eu.table[j,])
-          abline(h = eu0)
-        }
+          #kl
+          y.prob1<-cbind((1-y.prob),y.prob)
+          log.prob<-log(1/(y.prob1+e))
+          log.matrix<-cbind(df.test[,1],log.prob)
+          klsum0<-sum(log.matrix[log.matrix[,1] == 0,][,2])
+          if (is.null(nrow(log.matrix[log.matrix[,1] == 1,]))) {
+            klsum1<-sum(as.data.frame(log.matrix[log.matrix[,1] == 1,])[3,])
+          } else {
+            klsum1<-sum(log.matrix[log.matrix[,1] == 1,][,3])
+          } # avoid only one row equals to "0"
+          kl0<-(klsum0+klsum1)/nrow(log.matrix)
+          
+          # eu
+          y.prob1<-cbind((1-y.prob),y.prob)
+          minus.prob<-(1-y.prob1)^2
+          minus.matrix<-cbind(df.test[,1],minus.prob)
+          eusum0<-sum(minus.matrix[minus.matrix[,1] == 0,][,2])
+          if (is.null(nrow(minus.matrix[minus.matrix[,1] == 1,]))) {
+            eusum1<-sum(as.data.frame(minus.matrix[minus.matrix[,1] == 1,])[3,])
+          } else {
+            eusum1<-sum(minus.matrix[minus.matrix[,1] == 1,][,3])
+          }
+          eu0<-sqrt((eusum0+eusum1)/nrow(log.matrix))
+          
+          roc0.cv<-roc0.cv+roc0
+          kl0.cv<-kl0.cv+kl0
+          eu0.cv<-eu0.cv+eu0
+          # print (roc0)
+          
+          ################################################ 
+          ######## Vibration in Training Data Set ########
+          ################################################ 
+          
+          for (j in 1:nnrepl) {
+            rare.size<-j*n1
+            total.size<-rare.size+n0 # size of the vibrated training data set: (n0+j*n1)
+            train1.star<-train1[rep(seq_len(nrow(train1)), j), ] # duplicate the rare part
+            varDiag<-diag(colVars(as.matrix(train1.star)))  # sample variance diagonal (sigma q)
+            trainVib.y<-c(rep(0,n0),rep(1,rare.size))
+            factoryVib.y<-as.factor(trainVib.y)
+            yhat<-0
+            for (i in 1:nntrain) {
+              # add noise to each rare part in the training data set
+              noise<-mvrnorm(rare.size, rep(0,N), k*varDiag) # epsilson
+              # noise<-mvrnorm(rare.size, rep(0,N), k*diag(N)) # epsilson
+              train1.vib<-train1.star+noise # vibrate the rare part
+              train1.anti<-train1.star-noise # add anti-noise
+              
+              # generate the training data set with j rare parts (y=1)
+              trainVib.X<-rbind(train0,train1.vib) # training data set after vibrating the rare part
+              trainVib<-as.data.frame(cbind(trainVib.y, trainVib.X))
+              trainAnti.X<-rbind(train0,train1.anti)
+              trainAnti<-as.data.frame(cbind(trainVib.y, trainAnti.X))
+              
+              # models
+              if (models=="knn") {
+                # knn
+                y.pred_noise<-knn(trainVib.X, test.X, factoryVib.y, k=kValue, prob=TRUE)  # noise
+                y.prob_noise<-attr(y.pred_noise,"prob")
+                
+                y.pred_anti<-knn(trainAnti.X, test.X, factoryVib.y, k=kValue, prob=TRUE)  # anti-noise
+                y.prob_anti<-attr(y.pred_anti,"prob")
+              }  else if (models=="ld") {
+                # ld
+                lda.fit<-lda(trainVib.y~., data=trainVib[,-1])
+                y.prob_noise<-predict(lda.fit,df.test)$posterior[,2]
+                
+                lda.fit<-lda(trainVib.y~., data=trainAnti[,-1])
+                y.prob_anti<-predict(lda.fit,df.test)$posterior[,2]
+              } else if (models=="log") {
+                # log
+                y.fit<-multinom(factoryVib.y~., data=trainVib[,-1], trace=FALSE)
+                y.prob_noise<-predict(y.fit,df.test,type="probs")
+                
+                y.fit<-multinom(factoryVib.y~., data=trainAnti[,-1], trace=FALSE)
+                y.prob_anti<-predict(y.fit,df.test,type="probs")
+              } else if (models=="svm") {
+                # svm
+                y.fit<-svm(factoryVib.y~., data=trainVib[,-1], probability=TRUE)
+                y.pred<-predict(y.fit,newdata=df.test,probability=TRUE)
+                y.prob_noise<-attr(y.pred,"probabilities")[,2]
+                
+                y.fit<-svm(factoryVib.y~., data=trainAnti[,-1], probability=TRUE)
+                y.pred<-predict(y.fit,newdata=df.test,probability=TRUE)
+                y.prob_anti<-attr(y.pred,"probabilities")[,2]
+              } else if (models=="dtree") {
+                # dtree
+                # y.fit<-tree(factoryVib.y~., data=trainVib[,-1])
+                # y.prob_noise<-predict(y.fit, df.test, type="vector")[,2]
+                
+                y.fit<-rpart(factoryVib.y~., data=trainVib[,-1])
+                y.prob_noise<-predict(y.fit, df.test)[,2]
+                
+                # y.fit<-tree(factoryVib.y~., data=trainAnti[,-1])
+                # y.prob_anti<-predict(y.fit, df.test, type="vector")[,2]
+                
+                y.fit<-rpart(factoryVib.y~., data=trainAnti[,-1])
+                y.prob_anti<-predict(y.fit, df.test)[,2]
+                
+              } else if (models=="ptree") {
+                # ptree
+                y.auto<-rpart(factoryVib.y~., data=trainVib[,-1])
+                y.fit<-prune(y.auto, cp=0.1)
+                y.prob_noise<-predict(y.fit, df.test)[,2]
+                
+                y.auto<-rpart(factoryVib.y~., data=trainAnti[,-1])
+                y.fit<-prune(y.auto, cp=0.1)
+                y.prob_anti<-predict(y.fit, df.test)[,2]
+              } else if (models=="forest") {
+                # forest
+                y.fit<-randomForest(factoryVib.y~., data=trainVib[,-1],sampsize=train.size)
+                y.prob_noise<-predict(y.fit,newdata=df.test,type="prob")[,2]
+                
+                y.fit<-randomForest(factoryVib.y~., data=trainAnti[,-1],sampsize=train.size)
+                y.prob_anti<-predict(y.fit,newdata=df.test,type="prob")[,2]
+              } else if (models=="neural") {
+                # neural
+                y.fit<-nnet(factoryVib.y~., data=trainVib[,-1],size=2,decay = 5e-4, maxit = 200, trace=FALSE)
+                y.prob_noise<-as.numeric(predict(y.fit, df.test))
+                
+                y.fit<-nnet(factoryVib.y~., data=trainAnti[,-1],size=2,decay = 5e-4, maxit = 200, trace=FALSE)
+                y.prob_anti<-as.numeric(predict(y.fit, df.test))
+              } else if (models=="nb") {
+                # nb
+                
+                y.prob_noise<-predict(naiveBayes(factoryVib.y~.,data=trainVib[,-1]),df.test,type = "raw")[,2]
+                
+                y.prob_anti<-predict(naiveBayes(factoryVib.y~.,data=trainVib[,-1]),df.test,type = "raw")[,2]
+                
+                
+                # y.fit<-naiveBayes(factoryVib.y~.,data=trainVib)
+                # y.prob_noise<-predict(y.fit,df.test,type = "raw")[,2]
+                # 
+                # y.fit<-naiveBayes(factoryVib.y~.,data=trainAnti)
+                # y.prob_anti<-predict(y.fit,df.test,type = "raw")[,2]
+                
+                
+                # y.fit<-naiveBayes(factor.y~.,data=df.train[,-1])
+                # y.prob<-predict(y.fit,df.test,type = "raw")[,2]
+                
+              } else if (models=="C50") {
+                # C50
+                y.fit<-C5.0(factoryVib.y~., data=trainVib[,-1],rules=TRUE)
+                y.prob_noise<-predict(y.fit, df.test, type = "prob")[,2]
+                
+                y.fit<-C5.0(factoryVib.y~., data=trainAnti[,-1],rules=TRUE)
+                y.prob_anti<-predict(y.fit, df.test, type = "prob")[,2]
+              } else if (models=="fda") {
+                ############ FDA ############
+                y.fit<-fda(factoryVib.y~., data=trainVib[,-1])
+                y.prob_noise<-predict(y.fit, df.test, type = "posterior")[,2]
+                
+                y.fit<-fda(factoryVib.y~., data=trainAnti[,-1])
+                y.prob_anti<-predict(y.fit, df.test, type = "posterior")[,2]
+              } else if (models=="pls") {
+                ############ PLS ############
+                y.fit<-plsda(trainVib[,-1],factoryVib.y)
+                y.prob_noise<-predict(y.fit, df.test[,-1], type = "prob")[,2,1]
+                
+                y.fit<-plsda(trainAnti[,-1],factoryVib.y)
+                y.prob_anti<-predict(y.fit, df.test[,-1], type = "prob")[,2,1]
+              } else if (models=="mda") {
+                ############ MDA ############
+                y.fit<-mda(factoryVib.y~., data=trainVib[,-1])
+                y.prob_noise<-predict(y.fit, df.test, type = "posterior")[,2]
+                
+                y.fit<-mda(factoryVib.y~., data=trainAnti[,-1])
+                y.prob_anti<-predict(y.fit, df.test, type = "posterior")[,2]
+              } else {
+                stop("Wrong model type! Please use lower cases")
+              }
+              
+              # prediction probabilities after two-size vibration
+              yhat<-yhat+((y.prob_noise+y.prob_anti)/2)   # accumulative yhat
+              
+              # assessment
+              y.prob<-yhat/i
+              
+              # roc
+              roc.table[j,i]<-roc.table[j,i]+auc(test.y, y.prob)       # final roc table, same size as roc.summary
+              roc.diff[j,i]<-roc.diff[j,i]+(auc(test.y, y.prob)-roc0)
+              
+              #kl
+              y.prob1<-cbind((1-y.prob),y.prob)
+              log.prob<-log(1/(y.prob1+e))
+              log.matrix<-cbind(df.test[,1],log.prob)
+              klsum0<-sum(log.matrix[log.matrix[,1] == 0,][,2])
+              if (is.null(nrow(log.matrix[log.matrix[,1] == 1,]))) {
+                klsum1<-sum(as.data.frame(log.matrix[log.matrix[,1] == 1,])[3,])
+              } else {
+                klsum1<-sum(log.matrix[log.matrix[,1] == 1,][,3])
+              } # avoid only one row equals to "0"
+              kl.table[j,i]<-kl.table[j,i]+(klsum0+klsum1)/nrow(log.matrix)
+              kl.diff[j,i]<-kl.diff[j,i]+((klsum0+klsum1)/nrow(log.matrix))-kl0
+              
+              # eu
+              y.prob1<-cbind((1-y.prob),y.prob)
+              minus.prob<-(1-y.prob1)^2
+              minus.matrix<-cbind(df.test[,1],minus.prob)
+              eusum0<-sum(minus.matrix[minus.matrix[,1] == 0,][,2])
+              if (is.null(nrow(minus.matrix[minus.matrix[,1] == 1,]))) {
+                eusum1<-sum(as.data.frame(minus.matrix[minus.matrix[,1] == 1,])[3,])
+              } else {
+                eusum1<-sum(minus.matrix[minus.matrix[,1] == 1,][,3])
+              }
+              eu.table[j,i]<-eu.table[j,i]+sqrt((eusum0+eusum1)/nrow(log.matrix))
+              eu.diff[j,i]<-eu.diff[j,i]+(sqrt((eusum0+eusum1)/nrow(log.matrix)))-eu0
+            } # End of nntrain(i)
+            
+          } # End of nnrepl(j)
+          
+        } # End of k-fold CV (kk)
+        
+        # accumulate k-fold roc/kl/rmse
+        roc.table<-roc.table/k.cv
+        roc.diff<-roc.diff/k.cv
+        kl.table<-kl.table/k.cv
+        kl.diff<-kl.diff/k.cv
+        eu.table<-eu.table/k.cv
+        eu.diff<-eu.diff/k.cv
+        
+        rocMean<-rocMean+(roc0.cv/k.cv)
+        klMean<-klMean+(kl0.cv/k.cv)
+        euMean<-euMean+(eu0.cv/k.cv)
+        
+        # plot tend for the last j row
+        plot(roc.table[nnrepl,]) 
+        abline(h = roc0.cv/k.cv)
+        plot(kl.table[nnrepl,])
+        abline(h = kl0.cv/k.cv)
+        plot(eu.table[nnrepl,])
+        abline(h = eu0.cv/k.cv)
+
+        # summary after all k-fold cv
         roc.multi[[t]]<-roc.table
         roc.sum<-roc.sum+roc.table  # roc.sum is a sum of all roc.multi matrices
         rocdiff.multi[[t]]<-roc.diff
@@ -435,7 +466,8 @@ for (id in c(108)) {
         eu.sum<-eu.sum+eu.table
         eudiff.multi[[t]]<-eu.diff
         eudiff.sum<-eudiff.sum+eu.diff
-      }
+        
+      } # End of nsim (t)
       
       cat("\nOriginal ROC Mean =", rocMean/nsim, "\n")
       
@@ -727,7 +759,7 @@ for (id in c(108)) {
   dev.off()
 
   # output the final big table
-  rownames(output.table)<-rep(c("0.1","0.5","1.0"),12)
+  rownames(output.table)<-rep(c("0.1","0.5","1.0"),length(modelList))
   colnames(output.table)<-c("ROC0","ROC100","ROCdiff","ROCdiffCI","KL0","KL100","KLdiff","KLdiffCI","RMSE0","RMSE100","RMSEdiff","RMSEdiffCI")
   print(output.table)
   
